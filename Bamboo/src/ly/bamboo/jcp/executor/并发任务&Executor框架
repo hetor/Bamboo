@@ -1,0 +1,85 @@
+1. 解耦任务提交与执行
+2. 多种执行策略
+3. 要想在将应用程序分解为不同的任务时获得最大的好处，必须定义清晰的任务边界，分析解释揭示出粒度更细的并行性
+
+任务分解：
+任务通常是一些抽象且离散的工作单元，通过把应用程序的工作分解到多个任务中，可以简化程序的组织结构，提供一种自然的事务边界来优化错误恢复过程
+，以及提供一种自然的并行工作结构来提升并发性。
+第一步找出清晰的任务边界，理想情况下各个任务之间是要相互独立的。
+
+
+Executor接口
+异步任务
+使用生产者-消费者模式来解耦任务的提交和执行过程
+Executor实现类提供了对生命周期、统计信息收集、应用程序管理机制和性能监视等的支持
+
+
+在什么线程中执行任务
+任务按照什么顺序执行（FIFO、LIFO、优先级）
+有多少个任务可以并发执行
+有多少个任务在等待执行
+如果系统由于过载而需要拒绝一个任务时，选择哪一个，如果通知应用程序有任务被拒绝
+执行一个任务之前或之后，应该进行哪些操作
+限制并发任务数量
+
+线程池API：
+newFixedThreadPool将创建一个固定大小的线程池，每当提交一个任务时就创建一个线程，直到达到线程池规模的最大数量（如果某个线程由于发生了未预期的Exception而结束
+，那么线程池会补充一个新的线程）。
+newCachedThreadPool将创建一个可缓存的线程池，会回收空闲线程，线程不够时会添加新的线程，线程池规模没有限制。
+newSingletonThreadExecutor是一个单线程的Executor，如果这个线程异常结束，会创建一个新的线程代替。
+newScheduledThreadPool创建一个固定长度的线程池，而且以延迟或定时的方式来执行任务，基于DelayedWorkQueue，替代Timer。
+
+Executor的生命周期：
+Executor扩展了ExecutorService接口，添加了一些生命周期管理、任务提交的方法。
+ExecutorService的生命周期：运行、关闭、已终止
+API：
+void shutdown(); #执行平滑的关闭过程，不再接受新的任务，同时等待已经提交的任务执行完成。
+List<Runnable> shutdownNow(); #执行粗暴的关闭过程，尝试取消所有运行的任务，并且不再启动队列中尚未开始的任务。
+boolean isShutdown(); #
+boolean isTerminated(); #可以调用它来轮询ExecutorService是否到达终止状态。
+boolean awaitTermination(long timeout, TimeUnit unit); #调用它来等待ExecutorService到达终止状态。
+…//其它任务提交的便利方法
+
+在ExecutorService关闭后提交的任务将由“拒绝执行处理器”来处理，它会抛弃任务，或者使得execute方法抛出一个未检查的RejectedExecutionException
+，等所有任务执行完成后ExecutorService进入终止状态。
+
+延迟任务与周期任务：
+Timer：单线程、异常崩溃不会恢复、线程泄露。
+ScheduledThreadPoolExecutor替代Timer，DelayQueue中的任务只有当逾期后才能被take出来执行。
+
+Callable对比Runnable：
+1. Callable可以返回一个类型V，而Runnable不可以
+2. Callable能够抛出checked exception，而Runnable不可以
+3. Thread只支持Runnable
+
+Future&Callable：
+API：
+boolean cancel(boolean mayInterruptedIfRunning);
+boolean isCancelled();
+boolean isDone();
+V get() throws InterruptedException, ExecutionException, CancellationException;
+V get(long timeout, TimeUnit unit)
+     throws InterruptedException, ExecutionException, TimeoutException, CancellationException;
+
+Future表示一个任务的生命周期，并提供了相应地方法来判断是否已经完成或取消，以及获取任务的结果和取消任务等。
+Runnable局限性：无返回值，只能将结果写入日志或共享数据结构，不能抛出一个受检查的异常。
+要使用Callable来表示无返回值的任务，可使用Callable<Void>。
+
+get()：如果任务已经完成，那么get会立即返回或抛出一个异常，如果任务没有完成，会一直阻塞等待直到任务完成，如果任务抛出异常
+，那么get将该异常封装为ExecutionException并重新抛出，可以通过getCause来获得被封装的初始异常；如果任务被取消，那么get将抛出CancellationException。
+
+submit()：方法都能返回Future。
+
+可以重写AbstractExecutorService中的newTaskFor方法，来控制Future的实例化过程。
+
+只有当大量相互独立且同构的任务可以并发进行处理时，才能体现出将程序的工作负载分配到多个任务中带来的真正性能提升。
+
+ExecutorCompletionService：处理一组任务，CompleteService将Executor和BlockingQueue的功能融合在一起，你可以将Callable任务提交给它执行
+，然后使用类似于队列操作的take和poll等方法来获取已完成的结果，结果封装在Future中。
+
+为任务设置限时：
+get(timeLeft, timeUnit); 超时抛出TimeoutException异常，异常处理中取消任务。
+
+限时invokeAll：执行一组任务，返回一组Future，invokeAll按照任务集合中的迭代器的顺序将所有的Future填到返回的集合中，当所有任务都完成时
+，或者调用线程被中断，又或者超出指定时限时，invokeAll将返回，当超出指定时限时，任何还未完成的任务将取消，invokeAll返回后
+，每个任务要么执行完成，要么被取消，客户端代码可以通过调用get()或isCancelled来判断究竟是何种情况。
